@@ -14,9 +14,8 @@ from pypdf import PdfReader, PdfWriter
 
 app = FastAPI(title="AD&D PDF Generator")
 
-# Your uploaded PDF filename in GitHub must be exactly:
-# AD&D Fillable PDF.pdf
-PDF_TEMPLATE = "AD&D Fillable PDF.pdf"
+# This must match the exact PDF filename uploaded in GitHub.
+PDF_TEMPLATE = "AD&D Fillament Template.pdf"
 
 
 class Employee(BaseModel):
@@ -121,8 +120,6 @@ def fill_pdf(payload: PacketRequest) -> str:
 
     actual_date = payload.form_date or date.today().strftime("%m/%d/%Y")
 
-    # These are the actual fillable field names for the AD&D PDF.
-    # We are ignoring Premier Solutions and Signature Solutions.
     field_values = {
         "master_application_number": payload.carrier_client_code,
         "organization_name": payload.organization_name,
