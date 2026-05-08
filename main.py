@@ -2,7 +2,8 @@ import csv
 import os
 import smtplib
 import tempfile
-from datetime import date
+import uuid
+from datetime import date, datetime
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Optional, List
@@ -101,8 +102,10 @@ def generate_packet(
     if expected_api_key and x_api_key != expected_api_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
-    completed_pdf = fill_pdf(payload)
-    census_csv = generate_census_csv(payload)
+    unique_id = make_unique_id()
+
+    completed_pdf = fill_pdf(payload, unique_id)
+    census_csv = generate_census_csv(payload, unique_id)
 
     pdf_filename = os.path.basename(completed_pdf)
     csv_filename = os.path.basename(census_csv)
@@ -130,7 +133,7 @@ def generate_packet(
     }
 
 
-def fill_pdf(payload: PacketRequest) -> str:
+def fill_pdf(payload: PacketRequest, unique_id: str) -> str:
     reader = PdfReader(PDF_TEMPLATE)
     writer = PdfWriter()
 
@@ -175,7 +178,7 @@ def fill_pdf(payload: PacketRequest) -> str:
         writer.update_page_form_field_values(page, field_values)
 
     safe_org = clean_filename(payload.organization_name or "organization")
-    output_path = OUTPUT_DIR / f"AD&D_Master_Application_{safe_org}.pdf"
+    output_path = OUTPUT_DIR / f"AD&D_Master_Application_{safe_org}_{unique_id}.pdf"
 
     with open(output_path, "wb") as output_file:
         writer.write(output_file)
@@ -183,9 +186,9 @@ def fill_pdf(payload: PacketRequest) -> str:
     return str(output_path)
 
 
-def generate_census_csv(payload: PacketRequest) -> str:
+def generate_census_csv(payload: PacketRequest, unique_id: str) -> str:
     safe_org = clean_filename(payload.organization_name or "organization")
-    output_path = OUTPUT_DIR / f"AD&D_Census_{safe_org}.csv"
+    output_path = OUTPUT_DIR / f"AD&D_Census_{safe_org}_{unique_id}.csv"
 
     headers = [
         "First Name",
@@ -258,4 +261,15 @@ def clean_filename(value: str) -> str:
         elif char == " ":
             allowed.append("_")
 
-    return "".join(allowed)[:80]
+    cleaned = "".join(allowed).strip("_")
+
+    if not cleaned:
+        cleaned = "organization"
+
+    return cleaned[:80]
+
+
+def make_unique_id() -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_id = uuid.uuid4().hex[:6]
+    return f"{timestamp}_{short_id}"
