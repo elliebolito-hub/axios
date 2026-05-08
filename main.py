@@ -7,7 +7,8 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject, BooleanObject
@@ -16,6 +17,9 @@ from pypdf.generic import NameObject, BooleanObject
 app = FastAPI(title="AD&D PDF Generator")
 
 PDF_TEMPLATE = "AD&D_Fillable_Template.pdf"
+
+OUTPUT_DIR = Path(tempfile.gettempdir()) / "add_packets"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class Employee(BaseModel):
@@ -71,8 +75,24 @@ def inspect_pdf_fields():
     return {"fields": list(fields.keys())}
 
 
+@app.get("/download/{filename}")
+def download_file(filename: str):
+    safe_name = Path(filename).name
+    file_path = OUTPUT_DIR / safe_name
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found or expired")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=safe_name,
+        media_type="application/octet-stream",
+    )
+
+
 @app.post("/generate")
 def generate_packet(
+    request: Request,
     payload: PacketRequest,
     x_api_key: Optional[str] = Header(default=None),
 ):
@@ -83,6 +103,14 @@ def generate_packet(
 
     completed_pdf = fill_pdf(payload)
     census_csv = generate_census_csv(payload)
+
+    pdf_filename = os.path.basename(completed_pdf)
+    csv_filename = os.path.basename(census_csv)
+
+    base_url = str(request.base_url).rstrip("/")
+
+    pdf_url = f"{base_url}/download/{pdf_filename}"
+    csv_url = f"{base_url}/download/{csv_filename}"
 
     if payload.carrier_email:
         send_email_with_attachments(
@@ -95,8 +123,10 @@ def generate_packet(
     return {
         "status": "success",
         "message": "AD&D packet generated",
-        "pdf_file": os.path.basename(completed_pdf),
-        "csv_file": os.path.basename(census_csv),
+        "pdf_file": pdf_filename,
+        "csv_file": csv_filename,
+        "pdf_url": pdf_url,
+        "csv_url": csv_url,
     }
 
 
@@ -107,8 +137,6 @@ def fill_pdf(payload: PacketRequest) -> str:
     for page in reader.pages:
         writer.add_page(page)
 
-    # Correct way to copy the AcroForm from the template PDF.
-    # This fixes the Render error: 'str' object has no attribute 'write_to_stream'
     if "/AcroForm" in reader.trailer["/Root"]:
         writer._root_object.update({
             NameObject("/AcroForm"): reader.trailer["/Root"]["/AcroForm"]
@@ -146,20 +174,18 @@ def fill_pdf(payload: PacketRequest) -> str:
     for page in writer.pages:
         writer.update_page_form_field_values(page, field_values)
 
-    output_dir = tempfile.mkdtemp()
     safe_org = clean_filename(payload.organization_name or "organization")
-    output_path = os.path.join(output_dir, f"AD&D_Master_Application_{safe_org}.pdf")
+    output_path = OUTPUT_DIR / f"AD&D_Master_Application_{safe_org}.pdf"
 
     with open(output_path, "wb") as output_file:
         writer.write(output_file)
 
-    return output_path
+    return str(output_path)
 
 
 def generate_census_csv(payload: PacketRequest) -> str:
-    output_dir = tempfile.mkdtemp()
     safe_org = clean_filename(payload.organization_name or "organization")
-    output_path = os.path.join(output_dir, f"AD&D_Census_{safe_org}.csv")
+    output_path = OUTPUT_DIR / f"AD&D_Census_{safe_org}.csv"
 
     headers = [
         "First Name",
@@ -184,7 +210,7 @@ def generate_census_csv(payload: PacketRequest) -> str:
                 "Salary": employee.salary,
             })
 
-    return output_path
+    return str(output_path)
 
 
 def send_email_with_attachments(to_email: str, subject: str, body: str, attachments: list):
