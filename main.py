@@ -15,7 +15,7 @@ from pypdf import PdfReader, PdfWriter
 app = FastAPI(title="AD&D PDF Generator")
 
 # This must match the exact PDF filename uploaded in GitHub.
-PDF_TEMPLATE = "AD&D Fillament Template.pdf"
+PDF_TEMPLATE = "AD&D_Fillable_Template.pdf"
 
 
 class Employee(BaseModel):
