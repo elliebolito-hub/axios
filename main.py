@@ -10,6 +10,7 @@ from typing import Optional, List
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from pypdf import PdfReader, PdfWriter
+from pypdf.generic import NameObject, BooleanObject
 
 
 app = FastAPI(title="AD&D PDF Generator")
@@ -106,9 +107,15 @@ def fill_pdf(payload: PacketRequest) -> str:
     for page in reader.pages:
         writer.add_page(page)
 
-    if reader.trailer["/Root"].get("/AcroForm"):
+    # Correct way to copy the AcroForm from the template PDF.
+    # This fixes the Render error: 'str' object has no attribute 'write_to_stream'
+    if "/AcroForm" in reader.trailer["/Root"]:
         writer._root_object.update({
-            "/AcroForm": reader.trailer["/Root"]["/AcroForm"]
+            NameObject("/AcroForm"): reader.trailer["/Root"]["/AcroForm"]
+        })
+
+        writer._root_object["/AcroForm"].update({
+            NameObject("/NeedAppearances"): BooleanObject(True)
         })
 
     actual_date = payload.form_date or date.today().strftime("%m/%d/%Y")
