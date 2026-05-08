@@ -14,7 +14,6 @@ from pypdf import PdfReader, PdfWriter
 
 app = FastAPI(title="AD&D PDF Generator")
 
-# This must match the exact PDF filename uploaded in GitHub.
 PDF_TEMPLATE = "AD&D_Fillable_Template.pdf"
 
 
@@ -28,22 +27,22 @@ class Employee(BaseModel):
 
 
 class PacketRequest(BaseModel):
-    introductory_offer_selection: Optional[str] = ""
-
-    carrier_client_code: Optional[str] = ""
+    master_application_number: Optional[str] = ""
     organization_name: Optional[str] = ""
-    sic_description: Optional[str] = ""
+    type_of_business: Optional[str] = ""
 
     mailing_address: Optional[str] = ""
     city: Optional[str] = ""
     state: Optional[str] = ""
     zip: Optional[str] = ""
 
+    first_name: Optional[str] = ""
+    last_name: Optional[str] = ""
+    primary_contact: Optional[str] = ""
+
     phone: Optional[str] = ""
     email: Optional[str] = ""
     form_date: Optional[str] = ""
-
-    primary_contact: Optional[str] = ""
 
     agent_name: Optional[str] = ""
     agent_code: Optional[str] = ""
@@ -81,12 +80,6 @@ def generate_packet(
     if expected_api_key and x_api_key != expected_api_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
-    if payload.introductory_offer_selection.strip().upper() != "AD&D":
-        return {
-            "status": "skipped",
-            "reason": "Introductory Offer Selection is not AD&D",
-        }
-
     completed_pdf = fill_pdf(payload)
     census_csv = generate_census_csv(payload)
 
@@ -120,15 +113,19 @@ def fill_pdf(payload: PacketRequest) -> str:
 
     actual_date = payload.form_date or date.today().strftime("%m/%d/%Y")
 
+    primary_contact = payload.primary_contact
+    if not primary_contact:
+        primary_contact = f"{payload.first_name} {payload.last_name}".strip()
+
     field_values = {
-        "master_application_number": payload.carrier_client_code,
+        "master_application_number": payload.master_application_number,
         "organization_name": payload.organization_name,
-        "type_of_business": payload.sic_description,
+        "type_of_business": payload.type_of_business,
         "mailing_address": payload.mailing_address,
         "city": payload.city,
         "state": payload.state,
         "zip": payload.zip,
-        "primary_contact": payload.primary_contact,
+        "primary_contact": primary_contact,
         "phone": payload.phone,
         "email": payload.email,
         "date": actual_date,
