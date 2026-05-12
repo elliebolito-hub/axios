@@ -6,6 +6,7 @@ from datetime import date, datetime
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Optional, List
+from urllib.parse import quote
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -18,8 +19,10 @@ app = FastAPI(title="AD&D PDF Generator")
 
 PDF_TEMPLATE = "AD&D_Fillable_Template.pdf"
 
-# Store generated files in a local folder instead of a temp folder.
-# In Render, use a Persistent Disk for this folder if you want links to survive restarts/redeploys.
+# Free Render setup:
+# Files are stored locally in generated_files.
+# They can disappear after Render redeploys/restarts.
+# For paid persistent storage later, set OUTPUT_DIR=/var/data/generated_files.
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "generated_files"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +66,10 @@ class PacketRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AD&D PDF Generator is running"}
+    return {
+        "status": "AD&D PDF Generator is running",
+        "output_dir": str(OUTPUT_DIR),
+    }
 
 
 @app.get("/fields")
@@ -77,15 +83,46 @@ def inspect_pdf_fields():
     return {"fields": list(fields.keys())}
 
 
+@app.get("/files")
+def list_generated_files():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    files = []
+
+    for file_path in OUTPUT_DIR.iterdir():
+        if file_path.is_file():
+            files.append({
+                "filename": file_path.name,
+                "size_bytes": file_path.stat().st_size,
+                "download_url": f"/download/{quote(file_path.name)}",
+            })
+
+    return {
+        "output_dir": str(OUTPUT_DIR),
+        "file_count": len(files),
+        "files": files,
+    }
+
+
 @app.get("/download/{filename}")
 def download_file(filename: str):
     safe_name = Path(filename).name
     file_path = OUTPUT_DIR / safe_name
 
     if not file_path.exists():
+        available_files = [
+            item.name for item in OUTPUT_DIR.iterdir()
+            if item.is_file()
+        ] if OUTPUT_DIR.exists() else []
+
         raise HTTPException(
             status_code=404,
-            detail="File not found. The app may have restarted, redeployed, or the file was removed.",
+            detail={
+                "message": "File not found. The app may have restarted, redeployed, or the file was removed.",
+                "requested_file": safe_name,
+                "output_dir": str(OUTPUT_DIR),
+                "available_files": available_files,
+            },
         )
 
     if safe_name.lower().endswith(".pdf"):
@@ -132,8 +169,8 @@ def generate_packet(
     else:
         base_url = str(request.base_url).rstrip("/")
 
-    pdf_url = f"{base_url}/download/{pdf_filename}"
-    csv_url = f"{base_url}/download/{csv_filename}"
+    pdf_url = f"{base_url}/download/{quote(pdf_filename)}"
+    csv_url = f"{base_url}/download/{quote(csv_filename)}"
 
     if payload.carrier_email:
         send_email_with_attachments(
@@ -150,6 +187,9 @@ def generate_packet(
         "csv_file": csv_filename,
         "pdf_url": pdf_url,
         "csv_url": csv_url,
+        "pdf_exists": os.path.exists(completed_pdf),
+        "csv_exists": os.path.exists(census_csv),
+        "output_dir": str(OUTPUT_DIR),
     }
 
 
@@ -198,7 +238,10 @@ def fill_pdf(payload: PacketRequest, unique_id: str) -> str:
         writer.update_page_form_field_values(page, field_values)
 
     safe_org = clean_filename(payload.organization_name or "organization")
-    output_path = OUTPUT_DIR / f"AD&D_Master_Application_{safe_org}_{unique_id}.pdf"
+
+    # Use ADD in the technical filename so Zapier/GHL URLs do not break.
+    # The form, email subject, and app title can still say AD&D.
+    output_path = OUTPUT_DIR / f"ADD_Master_Application_{safe_org}_{unique_id}.pdf"
 
     with open(output_path, "wb") as output_file:
         writer.write(output_file)
@@ -208,7 +251,9 @@ def fill_pdf(payload: PacketRequest, unique_id: str) -> str:
 
 def generate_census_csv(payload: PacketRequest, unique_id: str) -> str:
     safe_org = clean_filename(payload.organization_name or "organization")
-    output_path = OUTPUT_DIR / f"AD&D_Census_{safe_org}_{unique_id}.csv"
+
+    # Use ADD in the technical filename so Zapier/GHL URLs do not break.
+    output_path = OUTPUT_DIR / f"ADD_Census_{safe_org}_{unique_id}.csv"
 
     headers = [
         "First Name",
