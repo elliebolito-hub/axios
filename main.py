@@ -1,7 +1,6 @@
 import csv
 import os
 import smtplib
-import tempfile
 import uuid
 from datetime import date, datetime
 from email.message import EmailMessage
@@ -19,7 +18,9 @@ app = FastAPI(title="AD&D PDF Generator")
 
 PDF_TEMPLATE = "AD&D_Fillable_Template.pdf"
 
-OUTPUT_DIR = Path(tempfile.gettempdir()) / "add_packets"
+# Store generated files in a local folder instead of a temp folder.
+# In Render, use a Persistent Disk for this folder if you want links to survive restarts/redeploys.
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "generated_files"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -82,12 +83,26 @@ def download_file(filename: str):
     file_path = OUTPUT_DIR / safe_name
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found or expired")
+        raise HTTPException(
+            status_code=404,
+            detail="File not found. The app may have restarted, redeployed, or the file was removed.",
+        )
+
+    if safe_name.lower().endswith(".pdf"):
+        media_type = "application/pdf"
+    elif safe_name.lower().endswith(".csv"):
+        media_type = "text/csv"
+    else:
+        media_type = "application/octet-stream"
 
     return FileResponse(
         path=str(file_path),
         filename=safe_name,
-        media_type="application/octet-stream",
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
@@ -110,7 +125,12 @@ def generate_packet(
     pdf_filename = os.path.basename(completed_pdf)
     csv_filename = os.path.basename(census_csv)
 
-    base_url = str(request.base_url).rstrip("/")
+    public_base_url = os.getenv("PUBLIC_BASE_URL")
+
+    if public_base_url:
+        base_url = public_base_url.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
 
     pdf_url = f"{base_url}/download/{pdf_filename}"
     csv_url = f"{base_url}/download/{csv_filename}"
